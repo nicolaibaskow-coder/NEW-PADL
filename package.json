@@ -1,0 +1,28 @@
+{
+  "name": "padl-telegram-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dry-run": "tsx src/dry-run.ts",
+    "trigger:dev": "trigger.dev dev",
+    "trigger:deploy": "trigger.dev deploy",
+    "verify": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@trigger.dev/sdk": "latest",
+    "playwright": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@trigger.dev/build": "latest",
+    "@types/node": "latest",
+    "trigger.dev": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
