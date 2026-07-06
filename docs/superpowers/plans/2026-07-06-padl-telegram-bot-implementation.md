@@ -364,6 +364,7 @@ export type RawAvailabilityEvent = {
 export type NormalizedSlot = {
   venueId: number;
   venueTitle: string;
+  venueOrder: number;
   venueSort: number;
   eventType: string;
   eventTitle: string;
@@ -825,6 +826,7 @@ import type { NormalizedSlot } from "../src/types";
 const slot = (overrides: Partial<NormalizedSlot>): NormalizedSlot => ({
   venueId: 12,
   venueTitle: "Ст. метро Баррикадная",
+  venueOrder: 1,
   venueSort: 1,
   eventType: "free_play",
   eventTitle: "Свободная игра",
@@ -847,7 +849,7 @@ describe("formatSlotMessages", () => {
     const messages = formatSlotMessages(
       [
         slot({ startsAt: "2026-07-06T16:00:00.000Z", moscowTimeLabel: "19:00" }),
-        slot({ venueId: 13, venueTitle: "Ст. метро Третьяковская", venueSort: 2, moscowTimeLabel: "20:00" }),
+        slot({ venueId: 13, venueTitle: "Ст. метро Третьяковская", venueOrder: 2, venueSort: 2, moscowTimeLabel: "20:00" }),
       ],
       3900
     );
@@ -861,6 +863,18 @@ describe("formatSlotMessages", () => {
         "06.07 20:00 — 4 чел. — Свободная игра",
       ].join("\n")
     );
+  });
+
+  it("сортирует площадки по порядку PADL_VENUES, подготовленному slot-filter", () => {
+    const messages = formatSlotMessages(
+      [
+        slot({ venueId: 12, venueTitle: "Ст. метро Баррикадная", venueOrder: 1, venueSort: 1 }),
+        slot({ venueId: 13, venueTitle: "Ст. метро Третьяковская", venueOrder: 0, venueSort: 2 }),
+      ],
+      3900
+    );
+
+    expect(messages[0]?.startsWith("Ст. метро Третьяковская")).toBe(true);
   });
 
   it("делит длинное сообщение без разрыва строки слота", () => {
@@ -927,6 +941,7 @@ export function formatSlotMessages(slots: NormalizedSlot[], maxLength: number): 
   }
 
   const ordered = [...slots].sort((a, b) => {
+    if (a.venueOrder !== b.venueOrder) return a.venueOrder - b.venueOrder;
     if (a.venueSort !== b.venueSort) return a.venueSort - b.venueSort;
     if (a.venueTitle !== b.venueTitle) return a.venueTitle.localeCompare(b.venueTitle, "ru");
     if (a.startsAt !== b.startsAt) return a.startsAt.localeCompare(b.startsAt);
@@ -1006,12 +1021,29 @@ const venue: PadlVenue = {
   sort: 1,
 };
 
+const venueTretyakovskaya: PadlVenue = {
+  id: 13,
+  title: "Ст. метро Третьяковская",
+  address: null,
+  workingHours: null,
+  sort: 2,
+};
+
 const card: PadlEventCard = {
   id: 1,
   title: "Свободная игра",
   eventType: "free_play",
   venueId: 12,
   eventIds: [147],
+  sort: 1,
+};
+
+const cardTretyakovskaya: PadlEventCard = {
+  id: 2,
+  title: "Свободная игра",
+  eventType: "free_play",
+  venueId: 13,
+  eventIds: [148],
   sort: 1,
 };
 
@@ -1030,6 +1062,11 @@ const event: RawAvailabilityEvent = {
       },
     },
   ],
+};
+
+const eventTretyakovskaya: RawAvailabilityEvent = {
+  ...event,
+  id: 148,
 };
 
 describe("normalizeAndFilterSlots", () => {
@@ -1066,6 +1103,20 @@ describe("normalizeAndFilterSlots", () => {
     });
 
     expect(slots).toEqual([]);
+  });
+
+  it("проставляет порядок площадок из PADL_VENUES", () => {
+    const slots = normalizeAndFilterSlots({
+      config: { ...config, venues: { mode: "list", values: ["Ст. метро Третьяковская", "12"] } },
+      venues: [venue, venueTretyakovskaya],
+      eventCards: [card, cardTretyakovskaya],
+      availabilityEvents: [event, eventTretyakovskaya],
+    });
+
+    expect(slots.map((slot) => [slot.venueTitle, slot.venueOrder])).toEqual([
+      ["Ст. метро Баррикадная", 1],
+      ["Ст. метро Третьяковская", 0],
+    ]);
   });
 });
 ```
@@ -1109,6 +1160,14 @@ function venueMatches(config: PadlConfig, venue: PadlVenue): boolean {
     return true;
   }
   return config.venues.values.some((value) => value === String(venue.id) || value === venue.title);
+}
+
+function venueOrder(config: PadlConfig, venue: PadlVenue): number {
+  if (config.venues.mode === "all") {
+    return venue.sort ?? 9999;
+  }
+  const index = config.venues.values.findIndex((value) => value === String(venue.id) || value === venue.title);
+  return index === -1 ? 9999 : index;
 }
 
 export function normalizeAndFilterSlots(input: {
@@ -1155,6 +1214,7 @@ export function normalizeAndFilterSlots(input: {
         slots.push({
           venueId: venue.id,
           venueTitle: venue.title,
+          venueOrder: venueOrder(input.config, venue),
           venueSort: venue.sort ?? 9999,
           eventType: card.eventType,
           eventTitle: event.title ?? card.title,
@@ -2013,8 +2073,9 @@ describe("runPadlMonitorOnce", () => {
       getDateOptions: vi.fn(),
       getAvailability: vi.fn().mockResolvedValue([]),
     };
+    const log = { log: vi.fn(), error: vi.fn() };
 
-    await runPadlMonitorOnce({ config, stateStore, telegram, padl, now: () => "2026-07-06T12:00:00.000Z" });
+    await runPadlMonitorOnce({ config, stateStore, telegram, padl, now: () => "2026-07-06T12:00:00.000Z", log });
 
     expect(telegram.getUpdates).toHaveBeenCalledWith({ offset: null, timeoutSeconds: 0 });
     expect(telegram.sendMessage).toHaveBeenCalledWith({ chatId: 111, text: "Свободных слотов сейчас нет" });
@@ -2028,6 +2089,19 @@ describe("runPadlMonitorOnce", () => {
         },
       },
     });
+    expect(log.log).toHaveBeenCalledWith(
+      "padl-monitor completed",
+      expect.objectContaining({
+        subscribers: 1,
+        slotsFound: 0,
+        sentMessages: 1,
+        slotSearchMs: expect.any(Number),
+        sendMs: expect.any(Number),
+        durationMs: expect.any(Number),
+        startedAt: expect.any(String),
+        finishedAt: expect.any(String),
+      })
+    );
   });
 
   it("ошибка получения слотов не удаляет подписчиков и отправляет короткую ошибку", async () => {
@@ -2111,7 +2185,8 @@ export async function runPadlMonitorOnce(input: {
   log?: Pick<Console, "log" | "error">;
 }): Promise<void> {
   const log = input.log ?? console;
-  const startedAt = Date.now();
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
   let state = await input.stateStore.load();
 
   const updates = await input.telegram.getUpdates({
@@ -2124,6 +2199,9 @@ export async function runPadlMonitorOnce(input: {
   state = setTelegramOffset(state, nextTelegramOffset(updates, state.telegramOffset));
 
   let messages: string[];
+  let slotsFound = 0;
+  let slotSearchMs = 0;
+  const slotSearchStartedAt = Date.now();
   try {
     const [venues, eventCards, availabilityEvents] = await Promise.all([
       input.padl.getVenues(),
@@ -2131,14 +2209,18 @@ export async function runPadlMonitorOnce(input: {
       collectAvailability(input.padl),
     ]);
     const slots = normalizeAndFilterSlots({ config: input.config, venues, eventCards, availabilityEvents });
+    slotsFound = slots.length;
     messages = formatSlotMessages(slots, input.config.maxMessageLength);
-    log.log("padl-monitor slots", { slots: slots.length });
+    slotSearchMs = Date.now() - slotSearchStartedAt;
+    log.log("padl-monitor slots", { slots: slotsFound, slotSearchMs });
   } catch (error) {
+    slotSearchMs = Date.now() - slotSearchStartedAt;
     log.error("padl-monitor slot fetch failed", error);
     messages = ["Не удалось проверить слоты. Попробую снова через минуту."];
   }
 
   let sentMessages = 0;
+  const sendStartedAt = Date.now();
   for (const subscriber of Object.values(state.subscribers)) {
     for (const text of messages) {
       try {
@@ -2153,12 +2235,19 @@ export async function runPadlMonitorOnce(input: {
       }
     }
   }
+  const sendMs = Date.now() - sendStartedAt;
 
   await input.stateStore.save(state);
+  const finishedAtMs = Date.now();
   log.log("padl-monitor completed", {
+    startedAt,
+    finishedAt: new Date(finishedAtMs).toISOString(),
     subscribers: Object.keys(state.subscribers).length,
+    slotsFound,
     sentMessages,
-    durationMs: Date.now() - startedAt,
+    slotSearchMs,
+    sendMs,
+    durationMs: finishedAtMs - startedAtMs,
   });
 }
 ```
