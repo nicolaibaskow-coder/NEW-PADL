@@ -13,12 +13,12 @@
     "verify": "npm run typecheck && npm test"
   },
   "dependencies": {
-    "@trigger.dev/sdk": "latest",
+    "@trigger.dev/sdk": "^4.5.0",
     "playwright": "latest",
     "zod": "latest"
   },
   "devDependencies": {
-    "@trigger.dev/build": "latest",
+    "@trigger.dev/build": "^4.5.0",
     "@types/node": "latest",
     "trigger.dev": "latest",
     "tsx": "latest",
