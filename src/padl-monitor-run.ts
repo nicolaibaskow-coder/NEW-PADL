@@ -21,8 +21,61 @@ type Padl = {
   getAvailability(input: { venueId: number; eventType: string; courtId: number; date: string }): Promise<RawAvailabilityEvent[]>;
 };
 
-async function collectAvailability(_padl: Padl): Promise<RawAvailabilityEvent[]> {
-  return [];
+function venueMatches(config: PadlConfig, venue: PadlVenue): boolean {
+  if (config.venues.mode === "all") {
+    return true;
+  }
+  return config.venues.values.some((value) => value === String(venue.id) || value === venue.title);
+}
+
+function extractCourtDates(dateOptions: unknown): Array<{ courtId: number; date: string }> {
+  const body = dateOptions as { courts?: Array<{ id?: number; dates?: Array<{ date?: string; disabled?: boolean }> }> };
+  const result: Array<{ courtId: number; date: string }> = [];
+  for (const court of body.courts ?? []) {
+    const courtId = court.id;
+    if (typeof courtId !== "number" || !Number.isInteger(courtId)) continue;
+    for (const date of court.dates ?? []) {
+      if (typeof date.date === "string" && date.disabled !== true) {
+        result.push({ courtId, date: date.date });
+      }
+    }
+  }
+  return result;
+}
+
+async function collectAvailability(input: {
+  padl: Padl;
+  config: PadlConfig;
+  venues: PadlVenue[];
+  eventCards: PadlEventCard[];
+}): Promise<RawAvailabilityEvent[]> {
+  const chunks: RawAvailabilityEvent[][] = [];
+  const uniquePairs = new Map<string, { venueId: number; eventType: string }>();
+  const venuesById = new Map(input.venues.map((venue) => [venue.id, venue]));
+
+  for (const card of input.eventCards) {
+    const venue = venuesById.get(card.venueId);
+    if (!venue || !venueMatches(input.config, venue) || !input.config.gameTypes.includes(card.eventType)) {
+      continue;
+    }
+    uniquePairs.set(`${card.venueId}:${card.eventType}`, { venueId: card.venueId, eventType: card.eventType });
+  }
+
+  for (const pair of uniquePairs.values()) {
+    const dateOptions = await input.padl.getDateOptions(pair);
+    for (const option of extractCourtDates(dateOptions)) {
+      chunks.push(
+        await input.padl.getAvailability({
+          venueId: pair.venueId,
+          eventType: pair.eventType,
+          courtId: option.courtId,
+          date: option.date,
+        })
+      );
+    }
+  }
+
+  return chunks.flat();
 }
 
 export async function runPadlMonitorOnce(input: {
@@ -52,11 +105,13 @@ export async function runPadlMonitorOnce(input: {
   let slotSearchMs = 0;
   const slotSearchStartedAt = Date.now();
   try {
-    const [venues, eventCards, availabilityEvents] = await Promise.all([
-      input.padl.getVenues(),
-      input.padl.getEventCards(),
-      collectAvailability(input.padl),
-    ]);
+    const [venues, eventCards] = await Promise.all([input.padl.getVenues(), input.padl.getEventCards()]);
+    const availabilityEvents = await collectAvailability({
+      padl: input.padl,
+      config: input.config,
+      venues,
+      eventCards,
+    });
     const slots = normalizeAndFilterSlots({ config: input.config, venues, eventCards, availabilityEvents });
     slotsFound = slots.length;
     messages = formatSlotMessages(slots, input.config.maxMessageLength);
