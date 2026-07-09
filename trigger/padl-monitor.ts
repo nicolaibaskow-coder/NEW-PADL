@@ -9,11 +9,14 @@ import { padlMonitorQueue } from "./queues";
 
 const config = loadConfig();
 
+// Чтобы приостановить расписание, cron переопределён вручную.
+// Паттерн "0 0 1 1 *" = 1 января каждого года в 00:00 (фактически остановка).
+// Чтобы вернуть мониторинг, замените на config.cron и задеплойте заново.
 export const padlMonitor = schedules.task({
   id: "padl-monitor",
   queue: padlMonitorQueue,
   cron: {
-    pattern: config.cron,
+    pattern: "0 0 1 1 *",
     timezone: config.timezone,
   },
   run: async () => {
